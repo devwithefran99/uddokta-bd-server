@@ -1,5 +1,5 @@
 import express from 'express' ;
-import { MongoClient } from 'mongodb';
+import { MongoClient, ObjectId } from 'mongodb';
 import 'dotenv/config';
 import cors from "cors";
 
@@ -57,6 +57,41 @@ app.post("/events", async (req, res) => {
     res.status(500).send({
       success: false,
       message: "Failed to create event",
+    });
+  }
+});
+
+app.patch("/events/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const eventData = req.body;
+
+    const result = await eventsCollection.updateOne(
+      { _id: new ObjectId(id) },
+      {
+        $set: {
+          ...eventData,
+          eventDate: new Date(eventData.eventDate),
+          updatedAt: new Date(),
+        },
+      }
+    );
+
+    if (result.matchedCount === 0) {
+      return res.status(404).send({
+        success: false,
+        message: "Event not found",
+      });
+    }
+
+    res.send({
+      success: true,
+      message: "Event updated successfully",
+    });
+  } catch (error) {
+    res.status(500).send({
+      success: false,
+      message: "Failed to update event",
     });
   }
 });
