@@ -167,6 +167,17 @@ app.get("/events/:id", async (req, res) => {
   res.send(result);
 });
 
+
+app.get("/my-events", async (req, res) => {
+  const email = req.query.email;
+
+  const result = await eventsCollection
+    .find({ creatorEmail: email })
+    .toArray();
+
+  res.send(result);
+});
+
 app.get("/joined-events", async (req, res) => {
   const email = req.query.email;
 
