@@ -109,6 +109,30 @@ app.get("/events", async (req, res) => {
   }
 });
 
+app.get("/upcoming-events", async (req, res) => {
+  const result = await eventsCollection
+    .find({
+      eventDate: { $gte: new Date() },
+    })
+    .sort({ eventDate: 1 })
+    .limit(6)
+    .toArray();
+
+  res.send(result);
+});
+
+app.delete("/events/:id", async (req, res) => {
+  const { id } = req.params;
+
+  const result = await eventsCollection.deleteOne({
+    _id: new ObjectId(id),
+  });
+
+  res.json(result);
+});
+
+
+
 app.listen(PORT, () => {
     console.log(`server is running in ${PORT}`)
 })
