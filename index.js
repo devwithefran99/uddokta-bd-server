@@ -35,6 +35,18 @@ export async function connectToMongoDB() {
 
 connectToMongoDB();
 
+
+const verifyApi = (req, res, next) => {
+  const authHeader = req.headers.authorization;
+  console.log(authHeader);
+   
+  if(authHeader !== ('user logged in successfully')) {
+    return res.status(401).send({ message: 'Unauthorized access' });
+  }
+
+  next();
+}
+
 app.get('/', (req, res) => {
   res.send({ message: `server is running` });
 });
@@ -97,7 +109,8 @@ app.post("/join-event", async (req, res) => {
   }
 });
 
-app.patch("/events/:id", async (req, res) => {
+app.patch("/events/:id",
+  async (req, res) => {
   try {
     const { id } = req.params;
     const eventData = req.body;
@@ -157,7 +170,9 @@ app.get("/upcoming-events", async (req, res) => {
   res.send(result);
 });
 
-app.get("/events/:id", async (req, res) => {
+app.get("/events/:id", 
+   verifyApi,
+  async (req, res) => {
   const { id } = req.params;
 
   const result = await eventsCollection.findOne({
