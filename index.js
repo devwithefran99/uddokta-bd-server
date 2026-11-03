@@ -3,6 +3,7 @@ import express from 'express';
 import { MongoClient, ObjectId } from 'mongodb';
 import 'dotenv/config';
 import cors from "cors";
+import { jwtVerify, createRemoteJWKSet } from "jose";
 
 const app = express();
 const PORT = 5000;
@@ -14,6 +15,49 @@ const client = new MongoClient(process.env.MONGODB_URI);
 
 let eventsCollection;
 let joinedEventsCollection;
+
+// JWT Verification Setup
+const authURL = process.env.BETTER_AUTH_URL;
+
+const JWKS = createRemoteJWKSet(
+  new URL(`${authURL}/api/auth/jwks`)
+);
+
+const verifyApi = async (req, res, next) => {
+  try {
+    const authHeader = req.headers.authorization;
+
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      return res.status(401).send({
+        message: "Unauthorized access. Token required!",
+      });
+    }
+
+    const token = authHeader.split(" ")[1];
+
+    const { payload } = await jwtVerify(token, JWKS, {
+      issuer: authURL,
+      audience: authURL,
+    });
+
+    req.user = payload;
+
+    if (!req.user.email) {
+      return res.status(401).send({
+        message: "Invalid user token",
+      });
+    }
+
+    next();
+
+  } catch (error) {
+    console.log("JWT Verification Error:", error.message);
+
+    return res.status(401).send({
+      message: "Invalid or expired token",
+    });
+  }
+};
 
 export async function connectToMongoDB() {
   try {
@@ -35,29 +79,23 @@ export async function connectToMongoDB() {
 
 connectToMongoDB();
 
-
-const verifyApi = (req, res, next) => {
-  const authHeader = req.headers.authorization;
-  console.log(authHeader);
-   
-  if(authHeader !== ('user logged in successfully')) {
-    return res.status(401).send({ message: 'Unauthorized access' });
-  }
-
-  next();
-}
-
 app.get('/', (req, res) => {
   res.send({ message: `server is running` });
 });
 
-app.post("/events", async (req, res) => {
+// Create Event - Protected
+app.post("/events", verifyApi, async (req, res) => {
   try {
     const eventData = req.body;
 
     const result = await eventsCollection.insertOne({
-      ...eventData,
+      title: eventData.title,
+      description: eventData.description,
+      eventType: eventData.eventType,
+      thumbnail: eventData.thumbnail,
+      location: eventData.location,
       eventDate: new Date(eventData.eventDate),
+      creatorEmail: req.user.email,
       createdAt: new Date(),
     });
 
@@ -66,6 +104,7 @@ app.post("/events", async (req, res) => {
       message: "Event created successfully",
       insertedId: result.insertedId,
     });
+
   } catch (error) {
     res.status(500).send({
       success: false,
@@ -74,14 +113,32 @@ app.post("/events", async (req, res) => {
   }
 });
 
-// Join Event API
-app.post("/join-event", async (req, res) => {
+// Join Event - Protected
+app.post("/join-event", verifyApi, async (req, res) => {
   try {
     const joinData = req.body;
 
+    if (!ObjectId.isValid(joinData.eventId)) {
+      return res.status(400).send({
+        success: false,
+        message: "Invalid event ID",
+      });
+    }
+
+    const event = await eventsCollection.findOne({
+      _id: new ObjectId(joinData.eventId),
+    });
+
+    if (!event) {
+      return res.status(404).send({
+        success: false,
+        message: "Event not found",
+      });
+    }
+
     const alreadyJoined = await joinedEventsCollection.findOne({
       eventId: joinData.eventId,
-      userEmail: joinData.userEmail,
+      userEmail: req.user.email,
     });
 
     if (alreadyJoined) {
@@ -92,7 +149,12 @@ app.post("/join-event", async (req, res) => {
     }
 
     const result = await joinedEventsCollection.insertOne({
-      ...joinData,
+      eventId: event._id.toString(),
+      eventTitle: event.title,
+      eventImage: event.thumbnail,
+      eventDate: event.eventDate,
+      location: event.location,
+      userEmail: req.user.email,
       joinedAt: new Date(),
     });
 
@@ -101,6 +163,7 @@ app.post("/join-event", async (req, res) => {
       message: "Successfully joined the event!",
       insertedId: result.insertedId,
     });
+
   } catch (error) {
     res.status(500).send({
       success: false,
@@ -109,17 +172,31 @@ app.post("/join-event", async (req, res) => {
   }
 });
 
-app.patch("/events/:id",
-  async (req, res) => {
+// Update Event - Protected + Owner Verification
+app.patch("/events/:id", verifyApi, async (req, res) => {
   try {
     const { id } = req.params;
     const eventData = req.body;
 
+    if (!ObjectId.isValid(id)) {
+      return res.status(400).send({
+        success: false,
+        message: "Invalid event ID",
+      });
+    }
+
     const result = await eventsCollection.updateOne(
-      { _id: new ObjectId(id) },
+      {
+        _id: new ObjectId(id),
+        creatorEmail: req.user.email,
+      },
       {
         $set: {
-          ...eventData,
+          title: eventData.title,
+          description: eventData.description,
+          eventType: eventData.eventType,
+          thumbnail: eventData.thumbnail,
+          location: eventData.location,
           eventDate: new Date(eventData.eventDate),
           updatedAt: new Date(),
         },
@@ -129,7 +206,7 @@ app.patch("/events/:id",
     if (result.matchedCount === 0) {
       return res.status(404).send({
         success: false,
-        message: "Event not found",
+        message: "Event not found or you are not the owner",
       });
     }
 
@@ -137,6 +214,7 @@ app.patch("/events/:id",
       success: true,
       message: "Event updated successfully",
     });
+
   } catch (error) {
     res.status(500).send({
       success: false,
@@ -145,19 +223,21 @@ app.patch("/events/:id",
   }
 });
 
+// Get All Events - Public
 app.get("/events", async (req, res) => {
   try {
     const events = await eventsCollection.find().toArray();
 
     res.send(events);
   } catch (error) {
-    res.send({
+    res.status(500).send({
       success: false,
       message: "Failed to get events",
     });
   }
 });
 
+// Upcoming Events - Public
 app.get("/upcoming-events", async (req, res) => {
   const result = await eventsCollection
     .find({
@@ -170,47 +250,75 @@ app.get("/upcoming-events", async (req, res) => {
   res.send(result);
 });
 
-app.get("/events/:id", 
-   verifyApi,
-  async (req, res) => {
+// Single Event Details - Public
+app.get("/events/:id", async (req, res) => {
   const { id } = req.params;
+
+  if (!ObjectId.isValid(id)) {
+    return res.status(400).send({
+      message: "Invalid event ID",
+    });
+  }
 
   const result = await eventsCollection.findOne({
     _id: new ObjectId(id),
   });
 
+  if (!result) {
+    return res.status(404).send({
+      message: "Event not found",
+    });
+  }
+
   res.send(result);
 });
 
-
-app.get("/my-events", async (req, res) => {
-  const email = req.query.email;
-
+// My Events - Protected
+app.get("/my-events", verifyApi, async (req, res) => {
   const result = await eventsCollection
-    .find({ creatorEmail: email })
+    .find({ creatorEmail: req.user.email })
     .toArray();
 
   res.send(result);
 });
 
-app.get("/joined-events", async (req, res) => {
-  const email = req.query.email;
-
+// Joined Events - Protected
+app.get("/joined-events", verifyApi, async (req, res) => {
   const result = await joinedEventsCollection
-    .find({ userEmail: email })
+    .find({ userEmail: req.user.email })
+    .sort({ eventDate: 1 })
     .toArray();
 
   res.send(result);
 });
 
-app.delete("/events/:id", async (req, res) => {
+// Delete Event - Protected + Owner Verification
+app.delete("/events/:id", verifyApi, async (req, res) => {
   const { id } = req.params;
+
+  if (!ObjectId.isValid(id)) {
+    return res.status(400).send({
+      success: false,
+      message: "Invalid event ID",
+    });
+  }
 
   const result = await eventsCollection.deleteOne({
     _id: new ObjectId(id),
+    creatorEmail: req.user.email,
   });
 
-  res.json(result);
+  if (result.deletedCount === 0) {
+    return res.status(404).send({
+      success: false,
+      message: "Event not found or you are not the owner",
+    });
+  }
+
+  res.send({
+    success: true,
+    message: "Event deleted successfully",
+  });
 });
 
 app.listen(PORT, () => {
