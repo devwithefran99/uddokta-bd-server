@@ -10,9 +10,43 @@ const PORT = 5000;
 
 app.use(cors());
 app.use(express.json());
+app.use(connectDB);
 
-// MongoDB Connection
-const client = new MongoClient(process.env.MONGODB_URI);
+const client = new MongoClient(process.env.MONGODB_URI, {
+  maxPoolSize: 10,
+  serverSelectionTimeoutMS: 10000,
+});
+
+let eventsCollection;
+let joinedEventsCollection;
+let dbConnectionPromise;
+
+const connectDB = async (req, res, next) => {
+  try {
+    if (!dbConnectionPromise) {
+      dbConnectionPromise = client.connect().then(() => {
+        const db = client.db("uddokta-bd");
+
+        eventsCollection = db.collection("events");
+        joinedEventsCollection = db.collection("joinedEvents");
+
+        console.log("MongoDB connected successfully!");
+      });
+    }
+
+    await dbConnectionPromise;
+    next();
+
+  } catch (error) {
+    console.log("MongoDB Connection Error:", error);
+
+    dbConnectionPromise = null;
+
+    res.status(503).send({
+      message: "Database connection failed",
+    });
+  }
+};
 
 const authURL = process.env.BETTER_AUTH_URL;
 
@@ -58,8 +92,6 @@ const verifyApi = async (req, res, next) => {
 };
 
 
-let eventsCollection;
-let joinedEventsCollection;
 
 // Create Event - Protected
 app.post("/events", verifyApi, async (req, res) => {
@@ -253,27 +285,6 @@ app.get("/", (req, res) => {
 });
 
 
-async function startServer() {
-  try {
-    await client.connect();
-
-    const db = client.db("uddokta-bd");
-
-    eventsCollection = db.collection("events");
-    joinedEventsCollection = db.collection("joinedEvents");
-
-    console.log("You successfully connected to MongoDB!");
-
-    app.listen(PORT, () => {
-      console.log(`Server is running at ${PORT}`);
-    });
-
-  } catch (error) {
-    console.log("MongoDB Connection Error:", error);
-  }
-}
-
-startServer();
 
 
 export default app;
