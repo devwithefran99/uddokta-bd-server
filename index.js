@@ -57,7 +57,7 @@ const verifyApi = async (req, res, next) => {
   }
 };
 
-// Database Collections
+
 let eventsCollection;
 let joinedEventsCollection;
 
@@ -79,13 +79,13 @@ app.post("/events", verifyApi, async (req, res) => {
   });
 });
 
-// Get All Events - Public
+
 app.get("/events", async (req, res) => {
   const result = await eventsCollection.find().toArray();
   res.send(result);
 });
 
-// Get Upcoming Events - Public
+
 app.get("/upcoming-events", async (req, res) => {
   const result = await eventsCollection
     .find({ eventDate: { $gte: new Date() } })
@@ -96,7 +96,7 @@ app.get("/upcoming-events", async (req, res) => {
   res.send(result);
 });
 
-// Get Single Event - Public
+
 app.get("/events/:id", async (req, res) => {
   const { id } = req.params;
 
@@ -164,7 +164,7 @@ app.post("/join-event", verifyApi, async (req, res) => {
   });
 });
 
-// Get My Events - Protected
+
 app.get("/my-events", verifyApi, async (req, res) => {
   const result = await eventsCollection
     .find({ creatorEmail: req.user.email })
@@ -173,7 +173,7 @@ app.get("/my-events", verifyApi, async (req, res) => {
   res.send(result);
 });
 
-// Get Joined Events - Protected
+
 app.get("/joined-events", verifyApi, async (req, res) => {
   const result = await joinedEventsCollection
     .find({ userEmail: req.user.email })
@@ -183,7 +183,7 @@ app.get("/joined-events", verifyApi, async (req, res) => {
   res.send(result);
 });
 
-// Update Event - Protected
+
 app.patch("/events/:id", verifyApi, async (req, res) => {
   const { id } = req.params;
   const data = req.body;
@@ -220,7 +220,7 @@ app.patch("/events/:id", verifyApi, async (req, res) => {
   });
 });
 
-// Delete Event - Protected
+
 app.delete("/events/:id", verifyApi, async (req, res) => {
   const { id } = req.params;
 
@@ -247,12 +247,12 @@ app.delete("/events/:id", verifyApi, async (req, res) => {
   });
 });
 
-// Home Route
+
 app.get("/", (req, res) => {
   res.send({ message: "server is running" });
 });
 
-// Connect MongoDB and Start Server
+
 async function startServer() {
   try {
     await client.connect();
@@ -274,3 +274,6 @@ async function startServer() {
 }
 
 startServer();
+
+
+export default app;
