@@ -1,35 +1,33 @@
 
-import express from 'express';
-import { MongoClient, ObjectId } from 'mongodb';
-import 'dotenv/config';
+import express from "express";
+import { MongoClient, ObjectId } from "mongodb";
+import "dotenv/config";
 import cors from "cors";
 import { jwtVerify, createRemoteJWKSet } from "jose";
 
 const app = express();
 const PORT = 5000;
 
-app.use(express.json());
 app.use(cors());
+app.use(express.json());
 
+// MongoDB Connection
 const client = new MongoClient(process.env.MONGODB_URI);
 
-let eventsCollection;
-let joinedEventsCollection;
-
-// JWT Verification Setup
 const authURL = process.env.BETTER_AUTH_URL;
 
 const JWKS = createRemoteJWKSet(
   new URL(`${authURL}/api/auth/jwks`)
 );
 
+// JWT Verification
 const verifyApi = async (req, res, next) => {
   try {
     const authHeader = req.headers.authorization;
 
     if (!authHeader || !authHeader.startsWith("Bearer ")) {
       return res.status(401).send({
-        message: "Unauthorized access. Token required!",
+        message: "Unauthorized access",
       });
     }
 
@@ -51,198 +49,46 @@ const verifyApi = async (req, res, next) => {
     next();
 
   } catch (error) {
-    console.log("JWT Verification Error:", error.message);
+    console.log("JWT Error:", error.message);
 
-    return res.status(401).send({
+    res.status(401).send({
       message: "Invalid or expired token",
     });
   }
 };
 
-export async function connectToMongoDB() {
-  try {
-    await client.connect();
-
-    const database = client.db("uddokta-bd");
-    eventsCollection = database.collection("events");
-    joinedEventsCollection = database.collection("joinedEvents");
-
-    console.log("You successfully connected to MongoDB!");
-    console.log("Events collection is ready!");
-    console.log("Joined Events collection is ready!");
-
-    return client;
-  } catch (err) {
-    console.dir(err);
-  }
-}
-
-connectToMongoDB();
-
-app.get('/', (req, res) => {
-  res.send({ message: `server is running` });
-});
+// Database Collections
+let eventsCollection;
+let joinedEventsCollection;
 
 // Create Event - Protected
 app.post("/events", verifyApi, async (req, res) => {
-  try {
-    const eventData = req.body;
+  const data = req.body;
 
-    const result = await eventsCollection.insertOne({
-      title: eventData.title,
-      description: eventData.description,
-      eventType: eventData.eventType,
-      thumbnail: eventData.thumbnail,
-      location: eventData.location,
-      eventDate: new Date(eventData.eventDate),
-      creatorEmail: req.user.email,
-      createdAt: new Date(),
-    });
+  const result = await eventsCollection.insertOne({
+    ...data,
+    creatorEmail: req.user.email,
+    eventDate: new Date(data.eventDate),
+    createdAt: new Date(),
+  });
 
-    res.status(201).send({
-      success: true,
-      message: "Event created successfully",
-      insertedId: result.insertedId,
-    });
-
-  } catch (error) {
-    res.status(500).send({
-      success: false,
-      message: "Failed to create event",
-    });
-  }
-});
-
-// Join Event - Protected
-app.post("/join-event", verifyApi, async (req, res) => {
-  try {
-    const joinData = req.body;
-
-    if (!ObjectId.isValid(joinData.eventId)) {
-      return res.status(400).send({
-        success: false,
-        message: "Invalid event ID",
-      });
-    }
-
-    const event = await eventsCollection.findOne({
-      _id: new ObjectId(joinData.eventId),
-    });
-
-    if (!event) {
-      return res.status(404).send({
-        success: false,
-        message: "Event not found",
-      });
-    }
-
-    const alreadyJoined = await joinedEventsCollection.findOne({
-      eventId: joinData.eventId,
-      userEmail: req.user.email,
-    });
-
-    if (alreadyJoined) {
-      return res.send({
-        success: false,
-        message: "You have already joined this event!",
-      });
-    }
-
-    const result = await joinedEventsCollection.insertOne({
-      eventId: event._id.toString(),
-      eventTitle: event.title,
-      eventImage: event.thumbnail,
-      eventDate: event.eventDate,
-      location: event.location,
-      userEmail: req.user.email,
-      joinedAt: new Date(),
-    });
-
-    res.status(201).send({
-      success: true,
-      message: "Successfully joined the event!",
-      insertedId: result.insertedId,
-    });
-
-  } catch (error) {
-    res.status(500).send({
-      success: false,
-      message: "Failed to join event",
-    });
-  }
-});
-
-// Update Event - Protected + Owner Verification
-app.patch("/events/:id", verifyApi, async (req, res) => {
-  try {
-    const { id } = req.params;
-    const eventData = req.body;
-
-    if (!ObjectId.isValid(id)) {
-      return res.status(400).send({
-        success: false,
-        message: "Invalid event ID",
-      });
-    }
-
-    const result = await eventsCollection.updateOne(
-      {
-        _id: new ObjectId(id),
-        creatorEmail: req.user.email,
-      },
-      {
-        $set: {
-          title: eventData.title,
-          description: eventData.description,
-          eventType: eventData.eventType,
-          thumbnail: eventData.thumbnail,
-          location: eventData.location,
-          eventDate: new Date(eventData.eventDate),
-          updatedAt: new Date(),
-        },
-      }
-    );
-
-    if (result.matchedCount === 0) {
-      return res.status(404).send({
-        success: false,
-        message: "Event not found or you are not the owner",
-      });
-    }
-
-    res.send({
-      success: true,
-      message: "Event updated successfully",
-    });
-
-  } catch (error) {
-    res.status(500).send({
-      success: false,
-      message: "Failed to update event",
-    });
-  }
+  res.send({
+    success: true,
+    message: "Event created successfully",
+    insertedId: result.insertedId,
+  });
 });
 
 // Get All Events - Public
 app.get("/events", async (req, res) => {
-  try {
-    const events = await eventsCollection.find().toArray();
-
-    res.send(events);
-  } catch (error) {
-    res.status(500).send({
-      success: false,
-      message: "Failed to get events",
-    });
-  }
+  const result = await eventsCollection.find().toArray();
+  res.send(result);
 });
 
-// Upcoming Events - Public
+// Get Upcoming Events - Public
 app.get("/upcoming-events", async (req, res) => {
   const result = await eventsCollection
-    .find({
-      eventDate: { $gte: new Date() },
-    })
+    .find({ eventDate: { $gte: new Date() } })
     .sort({ eventDate: 1 })
     .limit(6)
     .toArray();
@@ -250,7 +96,7 @@ app.get("/upcoming-events", async (req, res) => {
   res.send(result);
 });
 
-// Single Event Details - Public
+// Get Single Event - Public
 app.get("/events/:id", async (req, res) => {
   const { id } = req.params;
 
@@ -264,16 +110,61 @@ app.get("/events/:id", async (req, res) => {
     _id: new ObjectId(id),
   });
 
-  if (!result) {
+  res.send(result);
+});
+
+// Join Event - Protected
+app.post("/join-event", verifyApi, async (req, res) => {
+  const { eventId } = req.body;
+
+  if (!ObjectId.isValid(eventId)) {
+    return res.status(400).send({
+      success: false,
+      message: "Invalid event ID",
+    });
+  }
+
+  const event = await eventsCollection.findOne({
+    _id: new ObjectId(eventId),
+  });
+
+  if (!event) {
     return res.status(404).send({
+      success: false,
       message: "Event not found",
     });
   }
 
-  res.send(result);
+  const alreadyJoined = await joinedEventsCollection.findOne({
+    eventId: eventId,
+    userEmail: req.user.email,
+  });
+
+  if (alreadyJoined) {
+    return res.send({
+      success: false,
+      message: "You have already joined this event!",
+    });
+  }
+
+  const result = await joinedEventsCollection.insertOne({
+    eventId: event._id.toString(),
+    eventTitle: event.title,
+    eventImage: event.thumbnail,
+    eventDate: event.eventDate,
+    location: event.location,
+    userEmail: req.user.email,
+    joinedAt: new Date(),
+  });
+
+  res.send({
+    success: true,
+    message: "Successfully joined the event!",
+    insertedId: result.insertedId,
+  });
 });
 
-// My Events - Protected
+// Get My Events - Protected
 app.get("/my-events", verifyApi, async (req, res) => {
   const result = await eventsCollection
     .find({ creatorEmail: req.user.email })
@@ -282,7 +173,7 @@ app.get("/my-events", verifyApi, async (req, res) => {
   res.send(result);
 });
 
-// Joined Events - Protected
+// Get Joined Events - Protected
 app.get("/joined-events", verifyApi, async (req, res) => {
   const result = await joinedEventsCollection
     .find({ userEmail: req.user.email })
@@ -292,13 +183,49 @@ app.get("/joined-events", verifyApi, async (req, res) => {
   res.send(result);
 });
 
-// Delete Event - Protected + Owner Verification
+// Update Event - Protected
+app.patch("/events/:id", verifyApi, async (req, res) => {
+  const { id } = req.params;
+  const data = req.body;
+
+  if (!ObjectId.isValid(id)) {
+    return res.status(400).send({
+      message: "Invalid event ID",
+    });
+  }
+
+  const result = await eventsCollection.updateOne(
+    {
+      _id: new ObjectId(id),
+      creatorEmail: req.user.email,
+    },
+    {
+      $set: {
+        ...data,
+        eventDate: new Date(data.eventDate),
+        updatedAt: new Date(),
+      },
+    }
+  );
+
+  if (result.matchedCount === 0) {
+    return res.status(404).send({
+      message: "Event not found or you are not the owner",
+    });
+  }
+
+  res.send({
+    success: true,
+    message: "Event updated successfully",
+  });
+});
+
+// Delete Event - Protected
 app.delete("/events/:id", verifyApi, async (req, res) => {
   const { id } = req.params;
 
   if (!ObjectId.isValid(id)) {
     return res.status(400).send({
-      success: false,
       message: "Invalid event ID",
     });
   }
@@ -310,7 +237,6 @@ app.delete("/events/:id", verifyApi, async (req, res) => {
 
   if (result.deletedCount === 0) {
     return res.status(404).send({
-      success: false,
       message: "Event not found or you are not the owner",
     });
   }
@@ -321,6 +247,30 @@ app.delete("/events/:id", verifyApi, async (req, res) => {
   });
 });
 
-app.listen(PORT, () => {
-  console.log(`server is running in ${PORT}`);
+// Home Route
+app.get("/", (req, res) => {
+  res.send({ message: "server is running" });
 });
+
+// Connect MongoDB and Start Server
+async function startServer() {
+  try {
+    await client.connect();
+
+    const db = client.db("uddokta-bd");
+
+    eventsCollection = db.collection("events");
+    joinedEventsCollection = db.collection("joinedEvents");
+
+    console.log("You successfully connected to MongoDB!");
+
+    app.listen(PORT, () => {
+      console.log(`Server is running at ${PORT}`);
+    });
+
+  } catch (error) {
+    console.log("MongoDB Connection Error:", error);
+  }
+}
+
+startServer();
